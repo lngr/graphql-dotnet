@@ -55,6 +55,11 @@ namespace GraphQL
             var result = new ExecutionResult();
             try
             {
+                if (!schema.Initialized)
+                {
+                    schema.Initialize();
+                }
+
                 var document = _documentBuilder.Build(query);
                 var validationResult = _documentValidator.Validate(query, schema, document, rules);
 
@@ -170,7 +175,7 @@ namespace GraphQL
                 resolveContext.FieldName = field.Name;
                 resolveContext.FieldAst = field;
                 resolveContext.FieldDefinition = fieldDefinition;
-                resolveContext.ReturnType = context.Schema.FindType(fieldDefinition.Type);
+                resolveContext.ReturnType = fieldDefinition.ResolvedType;
                 resolveContext.ParentType = parentType;
                 resolveContext.Arguments = arguments;
                 resolveContext.Source = source;
@@ -191,12 +196,12 @@ namespace GraphQL
                     result = GetProperyValue(task, "Result");
                 }
 
-                if (parentType is __Field && result is Type)
-                {
-                    result = context.Schema.FindType(result as Type);
-                }
+//                if (parentType is __Field && result is Type)
+//                {
+//                    result = context.Schema.FindType(result as Type);
+//                }
 
-                resolveResult.Value = await CompleteValueAsync(context, context.Schema.FindType(fieldDefinition.Type), fields, result).ConfigureAwait(false);
+                resolveResult.Value = await CompleteValueAsync(context, fieldDefinition.ResolvedType, fields, result).ConfigureAwait(false);
                 return resolveResult;
             }
             catch (Exception exc)
@@ -226,7 +231,7 @@ namespace GraphQL
             var nonNullType = fieldType as NonNullGraphType;
             if (nonNullType != null)
             {
-                var type = context.Schema.FindType(nonNullType.Type);
+                var type = nonNullType.ResolvedType;
                 var completed = await CompleteValueAsync(context, type, fields, result).ConfigureAwait(false);
                 if (completed == null)
                 {
@@ -263,7 +268,7 @@ namespace GraphQL
                 }
 
                 var listType = fieldType as ListGraphType;
-                var itemType = context.Schema.FindType(listType.Type);
+                var itemType = listType.ResolvedType;
 
                 var results = await list.MapAsync(async item => await CompleteValueAsync(context, itemType, fields, item).ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -321,8 +326,8 @@ namespace GraphQL
 
             return definitionArguments.Aggregate(new Dictionary<string, object>(), (acc, arg) =>
             {
-                var value = astArguments != null ? astArguments.ValueFor(arg.Name) : null;
-                var type = schema.FindType(arg.Type);
+                var value = astArguments?.ValueFor(arg.Name);
+                var type = arg.ResolvedType;
 
                 var coercedValue = CoerceValue(schema, type, value, variables);
                 coercedValue = coercedValue ?? arg.DefaultValue;
@@ -496,7 +501,7 @@ namespace GraphQL
                     return false;
                 }
 
-                var nonNullType = schema.FindType(((NonNullGraphType) type).Type);
+                var nonNullType = ((NonNullGraphType) type).ResolvedType;
 
                 if (nonNullType is ScalarGraphType)
                 {
@@ -515,7 +520,7 @@ namespace GraphQL
             if (type is ListGraphType)
             {
                 var listType = (ListGraphType) type;
-                var listItemType = schema.FindType(listType.Type);
+                var listItemType = listType.ResolvedType;
 
                 var list = input as IEnumerable;
                 if (list != null && !(input is string))
@@ -549,7 +554,7 @@ namespace GraphQL
                     dict.TryGetValue(field.Name, out fieldValue);
                     return IsValidValue(
                         schema,
-                        schema.FindType(field.Type),
+                        field.ResolvedType,
                         fieldValue);
                 });
             }
@@ -579,7 +584,7 @@ namespace GraphQL
             if (type is NonNullGraphType)
             {
                 var nonNull = type as NonNullGraphType;
-                return CoerceValue(schema, schema.FindType(nonNull.Type), input, variables);
+                return CoerceValue(schema, nonNull.ResolvedType, input, variables);
             }
 
             if (input == null)
@@ -598,7 +603,7 @@ namespace GraphQL
             if (type is ListGraphType)
             {
                 var listType = type as ListGraphType;
-                var listItemType = schema.FindType(listType.Type);
+                var listItemType = listType.ResolvedType;
                 var list = input as ListValue;
                 return list != null
                     ? list.Values.Map(item => CoerceValue(schema, listItemType, item, variables)).ToArray()
@@ -621,7 +626,7 @@ namespace GraphQL
                     var objectField = objectValue.Field(field.Name);
                     if (objectField != null)
                     {
-                        var fieldValue = CoerceValue(schema, schema.FindType(field.Type), objectField.Value, variables);
+                        var fieldValue = CoerceValue(schema, field.ResolvedType, objectField.Value, variables);
                         fieldValue = fieldValue ?? field.DefaultValue;
 
                         obj[field.Name] = fieldValue;
